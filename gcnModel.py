@@ -6,7 +6,6 @@ from gensim.models import Word2Vec
 
 import torch
 import pydot
-
 from gensim.utils import simple_preprocess
 import numpy as np
 import networkx as nx
@@ -133,46 +132,52 @@ def infer_dims_from_state(state_dict):
     inferred_out = last_shape[0]
     return inferred_in, inferred_hidden, inferred_out
 
-#Input of the DotString
-dot_graph_str = """ """
 
-# load w2v model
-model_w2v = Word2Vec.load("jimple_word2vec.model")
+def calculating_confidence(hashcode, dot_graph):
+    # load w2v model
+    model_w2v = Word2Vec.load("jimple_word2vec.model")
 
-# Parse DOT string to networkx
-pydot_graphs = pydot.graph_from_dot_data(dot_graph_str)
-if not pydot_graphs:
-    raise ValueError("No graph parsed from the provided DOT string.")
-G = nx.drawing.nx_pydot.from_pydot(pydot_graphs[0]).to_undirected()
+    # Parse DOT string to networkx
+    pydot_graphs = pydot.graph_from_dot_data(dot_graph)
+    if not pydot_graphs:
+        raise ValueError("No graph parsed from the provided DOT string.")
+    G = nx.drawing.nx_pydot.from_pydot(pydot_graphs[0]).to_undirected()
 
-# Build features for the single graph
-vectorized_G = node_to_feature_tensor(G, model_w2v)
+    # Build features for the single graph
+    vectorized_G = node_to_feature_tensor(G, model_w2v)
 
-# Load Classifier
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-state = torch.load("gcn_fp_classifier.pth", map_location=device)
+    # Load Classifier
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    state = torch.load("gcn_fp_classifier.pth", map_location=device)
 
-inferred_in, inferred_hidden, inferred_out = infer_dims_from_state(state)
+    inferred_in, inferred_hidden, inferred_out = infer_dims_from_state(state)
 
-# Feature dimension sanity check
-feature_dim = vectorized_G.x.size(1)
-if feature_dim != inferred_in:
-    print(f"[WARN] Data feature dim ({feature_dim}) != model expected in_channels ({inferred_in}). "
-          f"Proceeding with model dims from checkpoint.")
+    # Feature dimension sanity check
+    feature_dim = vectorized_G.x.size(1)
+    if feature_dim != inferred_in:
+        print(f"[WARN] Data feature dim ({feature_dim}) != model expected in_channels ({inferred_in}). "
+              f"Proceeding with model dims from checkpoint.")
 
-model = GCNGraphClassifier(
-    in_channels=inferred_in,
-    hidden_channels=inferred_hidden,
-    out_channels=inferred_out,
-)
-model.load_state_dict(state)
-model.to(device)
-model.eval()
+    model = GCNGraphClassifier(
+        in_channels=inferred_in,
+        hidden_channels=inferred_hidden,
+        out_channels=inferred_out,
+    )
+    model.load_state_dict(state)
+    model.to(device)
+    model.eval()
 
-#Predict on single Graph
-with torch.no_grad():
-    data = vectorized_G.to(device)
-    logits = model(data)  # shape [1, C]
-    probs = torch.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-    pred_class = int(probs.argmax())
-    print(f"prediction: {pred_class}, probs: {probs}")
+    #Predict on single Graph
+    with torch.no_grad():
+        data = vectorized_G.to(device)
+        logits = model(data)  # shape [1, C]
+        probs = torch.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+        pred_class = int(probs.argmax())
+        predicted_class = pred_class
+        probability = probs.tolist()
+        print(f"prediction: {pred_class}, probs: {probs}")
+        return {
+            "hashcode":hashcode,
+            "prediction": predicted_class,
+            "probability_score": probability[1]
+        }
